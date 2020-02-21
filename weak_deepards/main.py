@@ -56,22 +56,47 @@ class System(pl.LightningModule):
         return {'test_loss': loss}
 
     def configure_optimizers(self):
-        return torch.optim.SGD(self.parameters(), lr=0.1)
+        return torch.optim.SGD(self.parameters(), lr=0.01)
 
     @pl.data_loader
     def train_dataloader(self):
-        # XXX
-        return DataLoader()
+        if self.hparams.train_from_pickle:
+            dataset = ARDSRawDataset.from_pickle(self.hparams.train_from_pickle)
+        else:
+            dataset = ARDSRawDataset(
+                self.hparams.dataset_path,
+                '1',
+                self.hparams.cohort,
+                self.hparams.input_units,
+                to_pickle=self.hparams.train_to_pickle,
+            )
+        return DataLoader(dataset, batch_size=self.hparams.batch_size)
 
     @pl.data_loader
     def val_dataloader(self):
-        # XXX
-        return DataLoader()
+        if self.hparams.test_from_pickle:
+            dataset = ARDSRawDataset.from_pickle(self.hparams.test_from_pickle)
+        else:
+            dataset = ARDSRawDataset(
+                self.hparams.dataset_path,
+                '1',
+                self.hparams.cohort,
+                self.hparams.input_units,
+                to_pickle=self.hparams.test_to_pickle,
+                train=False,
+            )
+        return DataLoader(dataset, batch_size=self.hparams.batch_size)
 
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--input-units', type=int, default=224)
+    parser.add_argument('--train-to-pickle')
+    parser.add_argument('--train-from-pickle')
+    parser.add_argument('--test-to-pickle')
+    parser.add_argument('--test-from-pickle')
+    parser.add_argument('-dp', '--dataset-path', default='/fastdata/ardsdetection_data')
+    parser.add_argument('-c', '--cohort', default='cohort-description.csv')
+    parser.add_argument('--input-units', type=int, default=5096)
     parser.add_argument('-ps', '--pattern-size', type=int, default=10)
     parser.add_argument('-pf', '--pattern-freq', type=float, default=.5)
     parser.add_argument('-emin', '--min-epochs', type=int, default=5)

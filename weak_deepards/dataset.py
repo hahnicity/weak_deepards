@@ -155,7 +155,7 @@ class ARDSRawDataset(Dataset):
             patient_id = self._get_patient_id_from_file(filename)
 
             if patient_id != last_patient:
-                seq_arr = []
+                seq_arr = list()
 
             last_patient = patient_id
             start_time = self._get_patient_start_time(patient_id)
@@ -181,13 +181,15 @@ class ARDSRawDataset(Dataset):
                 elif breath_time > start_time + pd.Timedelta(hours=24):
                     break
 
-                flow = np.array(breath['flow'])
+                flow = breath['flow']
                 # XXX for now don't drop breaths. But later might have to try this.
                 if len(flow) + len(seq_arr) >= self.seq_len:
                     remainder = self.seq_len - len(seq_arr)
                     seq_arr.extend(flow[:remainder])
-                    self.all_sequences.append([patient_id, seq_arr, self._pathophysiology_target(patient_id)])
+                    self.all_sequences.append([patient_id, np.array(seq_arr), self._pathophysiology_target(patient_id)])
                     seq_arr = flow[remainder:]
+                else:
+                    seq_arr.extend(flow)
 
     def _get_scaling_factors_for_indices(self, indices):
         """
@@ -199,7 +201,7 @@ class ARDSRawDataset(Dataset):
 
         for idx in indices:
             obs = self.all_sequences[idx][1]
-            obs_count += np.prod(obs.shape)
+            obs_count += len(obs)
             mean_sum += obs.sum()
         mu = mean_sum / obs_count
 
