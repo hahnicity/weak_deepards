@@ -1,0 +1,16 @@
+name: weakards
+channels:
+  - conda-forge
+  - menpo
+  - pytorch
+dependencies:
+  - python=3.7
+  - scipy<1.3
+  - pyqt
+  - matplotlib
+  - pyyaml
+  - pytorch
+  - torchvision
+  - opencv
+  - tensorboardx
+  - ipython
