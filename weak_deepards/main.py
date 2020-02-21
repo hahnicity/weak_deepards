@@ -5,35 +5,48 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
+import yaml
 
 from weak_deepards.dataset import ARDSRawDataset
+from weak_deepards.models.base.resnet import resnet18
+from weak_deepards.models.modules.peak_response_mapping import PeakResponseMapping
 
 
 class System(pl.LightningModule):
     def __init__(self, hparams):
         super(System, self).__init__()
+        with open(hparams.config_file) as conf:
+            config = yaml.safe_load(conf)
         self.input_units = hparams.input_units
-        # XXX add network
-        self.pattern_size = hparams.pattern_size
+        base = resnet18()
+        self.model = PeakResponseMapping(base, **config['model'])
         self.hparams = hparams
 
     def forward(self, x):
-        pass
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y = torch.autograd.Variable(torch.stack(y, dim=1).reshape(len(y[0]), 2))
+        pt, x, y = batch
+        x = x.unsqueeze(1)
+        x = torch.autograd.Variable(x)
+        y = torch.autograd.Variable(y)
         y_hat = self.forward(x.float())
-        # Can probably just use BCE on this one.
-        loss = F.binary_cross_entropy(y_hat, y.float())
+        # Can probably just use BCE on this one because we're only supposed to have one class
+        # in each snippet of data. However I wonder what would happen if we stretched the window
+        # wide enough and we started saying that there were both norm and ARDS pattern in it.
+        # Could be a interesting experiment even if its a total failure
+        #
+        # XXX I dunno if using CE is right or if argmax is correct, but I'd like to see how
+        # it pans out
+        loss = F.cross_entropy(y_hat, y.long().argmax(dim=1))
         board_logs = {'train_loss': loss}
         return {'loss': loss, 'log': board_logs}
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y = torch.stack(y, dim=1).reshape(len(y[0]), 1, 2)
+        pt, x, y = batch
+        x = x.unsqueeze(1)
         y_hat = self.forward(x.float())
-        loss = F.binary_cross_entropy(y_hat, y.float())
+        loss = F.cross_entropy(y_hat, y.long().argmax(dim=1))
         return {'val_loss': loss}
 
     def validation_end(self, outputs):
@@ -47,7 +60,7 @@ class System(pl.LightningModule):
         }
 
     def test_step(self):
-        x, y = batch
+        pt, x, y = batch
         y = torch.stack(y, dim=1)
         y_hat = self.forward(x.float())
         loss = F.binary_cross_entropy(y_hat, y.float())
@@ -69,7 +82,7 @@ class System(pl.LightningModule):
                 to_pickle=self.hparams.train_to_pickle,
                 all_sequences=[],
             )
-        return DataLoader(dataset, batch_size=self.hparams.batch_size)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
 
     @pl.data_loader
     def val_dataloader(self):
@@ -85,17 +98,18 @@ class System(pl.LightningModule):
                 train=False,
                 all_sequences=[],
             )
-        return DataLoader(dataset, batch_size=self.hparams.batch_size)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
 
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--train-to-pickle')
-    parser.add_argument('--train-from-pickle')
-    parser.add_argument('--test-to-pickle')
-    parser.add_argument('--test-from-pickle')
+    parser.add_argument('--train-to-pickle', default='')
+    parser.add_argument('--train-from-pickle', default='')
+    parser.add_argument('--test-to-pickle', default='')
+    parser.add_argument('--test-from-pickle', default='')
     parser.add_argument('-dp', '--dataset-path', default='/fastdata/ardsdetection_data')
     parser.add_argument('-c', '--cohort', default='cohort-description.csv')
+    parser.add_argument('--config-file', default='config.yml')
     parser.add_argument('--input-units', type=int, default=5096)
     parser.add_argument('-ps', '--pattern-size', type=int, default=10)
     parser.add_argument('-pf', '--pattern-freq', type=float, default=.5)

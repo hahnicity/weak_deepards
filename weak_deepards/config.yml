@@ -1,0 +1,33 @@
+# I gotta get me one of those
+data_loaders:
+  batch_size: 16
+  num_workers: 4
+  train_splits:
+    - trainval
+
+model:
+  # _name: peak_response_mapping
+  # backbone:
+  #   _name: fc_resnet50
+  win_size: 3
+  sub_pixel_locating_factor: 8
+  enable_peak_stimulation: true
+
+optimizer:
+  # _name: sgd_optimizer
+  lr: 0.01
+  momentum: 0.9
+  weight_decay: 1.0e-4
+
+finetune:
+  # _name: finetune
+  base_lr: 0.01
+  groups:
+    'features': 0.01
+
+max_epoch: 20
+
+device: cuda
+log: ./
+
+snapshot: ./snapshots
