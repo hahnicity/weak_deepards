@@ -16,22 +16,20 @@ class System(pl.LightningModule):
         # XXX add network
         self.pattern_size = hparams.pattern_size
         self.hparams = hparams
-        self.batch_idx = 0
 
     def forward(self, x):
         pass
 
     def training_step(self, batch, batch_idx):
-        self.batch_idx = batch_idx
         x, y = batch
         y = torch.autograd.Variable(torch.stack(y, dim=1).reshape(len(y[0]), 2))
         y_hat = self.forward(x.float())
+        # Can probably just use BCE on this one.
         loss = F.binary_cross_entropy(y_hat, y.float())
         board_logs = {'train_loss': loss}
         return {'loss': loss, 'log': board_logs}
 
     def validation_step(self, batch, batch_idx):
-        self.batch_idx = batch_idx
         x, y = batch
         y = torch.stack(y, dim=1).reshape(len(y[0]), 1, 2)
         y_hat = self.forward(x.float())
@@ -69,6 +67,7 @@ class System(pl.LightningModule):
                 self.hparams.cohort,
                 self.hparams.input_units,
                 to_pickle=self.hparams.train_to_pickle,
+                all_sequences=[],
             )
         return DataLoader(dataset, batch_size=self.hparams.batch_size)
 
@@ -84,6 +83,7 @@ class System(pl.LightningModule):
                 self.hparams.input_units,
                 to_pickle=self.hparams.test_to_pickle,
                 train=False,
+                all_sequences=[],
             )
         return DataLoader(dataset, batch_size=self.hparams.batch_size)
 
