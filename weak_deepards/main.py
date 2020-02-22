@@ -75,7 +75,7 @@ class System(pl.LightningModule):
             # I can do to boost response? Could it be due to ambuiguity in class response?
             # Could it be because we are not multiplying by height here and are only using
             # width?
-            visual_cues = self.model(rand_seq, peak_threshold=2)
+            visual_cues = self.model(rand_seq, peak_threshold=self.hparams.pr_thresh)
             if visual_cues is None:
                 print('No class response detected')
             else:
@@ -106,7 +106,7 @@ class System(pl.LightningModule):
                 ax2.axis('off')
                 ax3.scatter(np.arange(rand_seq.shape[-1]), rand_seq.ravel(), c=upsampled_crm[0, class_idx], s=rand_seq.shape[-1] / 255)
                 ax3.plot(rand_seq.ravel())
-                ax3.set_title('Sequence with Class Response Map ("%s")' % class_names[class_idx])
+                ax3.set_title('Sequence with CRM ("%s")' % class_names[class_idx])
                 ax3.axis('off')
 
                 ax_prm0.set_title('Peak Response Map ("%s")' % (class_names[0]))
@@ -198,6 +198,7 @@ def main():
     parser.add_argument('-b', '--batch-size', type=int, default=128)
     parser.add_argument('-nn', choices=['cnn'], default='cnn')
     parser.add_argument('-lr', '--learning-rate', type=float, default=0.01)
+    parser.add_argument('--pr-thresh', type=float, default=2.0)
     parser.add_argument('--cuda', action='store_true')
     args = parser.parse_args()
 
@@ -205,7 +206,7 @@ def main():
     # just going to drop the lightning component
     gpus = {True: 1, False: None}[args.cuda]
     model = System(args)
-    trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, distributed_backend='dp', gpus=gpus)
+    trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, gpus=gpus)
     trainer.fit(model)
     model.inference()
 
