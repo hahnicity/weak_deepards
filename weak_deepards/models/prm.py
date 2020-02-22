@@ -3,19 +3,11 @@ from typing import Union, Optional, List, Tuple
 import cv2
 import numpy as np
 import torch.nn as nn
-from torchvision import models
 from matplotlib.colors import hsv_to_rgb
 from scipy.ndimage import center_of_mass
 
 from weak_deepards.models.base.resnet import resnet18
 from weak_deepards.models.modules.peak_response_mapping import PeakResponseMapping
-
-
-def fc_resnet50(num_classes: int = 20, pretrained: bool = True) -> nn.Module:
-    """FC ResNet50.
-    """
-    model = FC_ResNet(models.resnet50(pretrained), num_classes)
-    return model
 
 
 def peak_response_mapping(

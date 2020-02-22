@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from scipy.misc import imresize
 
-from ..functions import pr_conv2d, peak_stimulation
+from ..functions import pr_conv1d, peak_stimulation
 
 
 class PeakResponseMapping(nn.Sequential):
@@ -59,7 +59,7 @@ class PeakResponseMapping(nn.Sequential):
         for module in self.modules():
             if isinstance(module, nn.Conv2d):
                 module._original_forward = module.forward
-                module.forward = MethodType(pr_conv2d, module)
+                module.forward = MethodType(pr_conv1d, module)
 
     def _recover(self):
         for module in self.modules():
@@ -193,7 +193,6 @@ class PeakResponseMapping(nn.Sequential):
         # print("aggregation", aggregation)
         # exit()
 
-        # XXX cross this bridge at inference time
         if self.inferencing:
 
             if not self.enable_peak_backprop:
@@ -205,25 +204,21 @@ class PeakResponseMapping(nn.Sequential):
             if peak_list is None:
                 peak_list = peak_stimulation(class_response_maps, return_aggregation=False, win_size=self.win_size, peak_filter=self.peak_filter)
 
-            # print(peak_list)
-
             peak_response_maps = []
             valid_peak_list = []
             # peak backpropagation
             grad_output = class_response_maps.new_empty(class_response_maps.size())
             for idx in range(peak_list.size(0)):
                 if aggregation[peak_list[idx, 0], peak_list[idx, 1]] >= class_threshold:
-                    peak_val = class_response_maps[peak_list[idx, 0], peak_list[idx, 1], peak_list[idx, 2], peak_list[idx, 3]]
+                    peak_val = class_response_maps[peak_list[idx, 0], peak_list[idx, 1], peak_list[idx, 2]]
                     if peak_val > peak_threshold:
-                        # print('k ')
                         grad_output.zero_()
                         # starting from the peak
-                        grad_output[peak_list[idx, 0], peak_list[idx, 1], peak_list[idx, 2], peak_list[idx, 3]] = 1
+                        grad_output[peak_list[idx, 0], peak_list[idx, 1], peak_list[idx, 2]] = 1
                         if input.grad is not None:
                             input.grad.zero_()
                         class_response_maps.backward(grad_output, retain_graph=True)
                         prm = input.grad.detach().sum(1).clone().clamp(min=0)
-                        # print('prm  ', prm)
                         peak_response_maps.append(prm / prm.sum())
                         valid_peak_list.append(peak_list[idx, :])
 
@@ -232,7 +227,6 @@ class PeakResponseMapping(nn.Sequential):
             aggregation = aggregation.detach()
 
             if len(peak_response_maps) > 0:
-                # print('kkkkkkkkkkkkkk')
                 valid_peak_list = torch.stack(valid_peak_list)
                 peak_response_maps = torch.cat(peak_response_maps, 0)
                 if retrieval_cfg is None:
