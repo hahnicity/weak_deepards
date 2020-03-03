@@ -13,6 +13,7 @@ import yaml
 from weak_deepards.dataset import ARDSRawDataset
 from weak_deepards.models.base.resnet import resnet18
 from weak_deepards.models.prm import peak_response_mapping
+from weak_deepards.results import ModelCollection
 
 
 class System(pl.LightningModule):
@@ -24,12 +25,13 @@ class System(pl.LightningModule):
         base = resnet18()
         self.model = peak_response_mapping(base, **config['model'])
         self.hparams = hparams
+        self.results = ModelCollection()
 
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        pt, x, y = batch
+        idxs, pt, x, y = batch
         x = x.unsqueeze(1)
         x = Variable(x)
         y = Variable(y)
@@ -46,14 +48,11 @@ class System(pl.LightningModule):
         return {'loss': loss, 'log': board_logs}
 
     def validation_step(self, batch, batch_idx):
-        pt, x, y = batch
+        idxs, pt, x, y = batch
         x = x.unsqueeze(1)
         y_hat = self.forward(x.float())
-        # XXX loss may be a bad metric for validation sets because we could def. have
-        # non-ARDS-like data in a frame taken from an ARDS patient. Maybe F1 would be
-        # a better metric?
         loss = F.cross_entropy(y_hat, y.long().argmax(dim=1))
-        return {'val_loss': loss}
+        return {'val_loss': loss, 'pt': pt, 'y': y, 'pred': y_hat, 'idxs': idxs}
 
     def perform_inference(self):
         # need to enable grad because pytorch lightning disables in validation step
@@ -61,11 +60,11 @@ class System(pl.LightningModule):
         # a with.no_grad header no grads will ever be calculated
         with torch.enable_grad():
             # Get batch from loader
-            loader = self.val_dataloader()[0]
-            for rand_batch in loader:
+            for rand_batch in self.val_loader:
                 break
-            rand_idx = np.random.randint(rand_batch[1].shape[0])
-            rand_seq = rand_batch[1][rand_idx].float().reshape(
+            batch_data = rand_batch[2]
+            rand_idx = np.random.randint(batch_data.shape[0])
+            rand_seq = batch_data[rand_idx].float().reshape(
                 (1, 1, self.hparams.input_units)).cuda().requires_grad_()
             # run an inference to get an intuition for the model
             self.model.eval()
@@ -142,6 +141,20 @@ class System(pl.LightningModule):
         loss = F.binary_cross_entropy(y_hat, y.float())
         return {'test_loss': loss}
 
+    def validation_end(self, outputs):
+        # This means that the warmup ran so we should not bother reporting results
+        if len(outputs) == 5:
+            return
+
+        y_val = self.val_loader.dataset.get_ground_truth_df()
+        for dict_ in outputs:
+            y_val.loc[dict_['idxs'].cpu(), 'pred'] = F.softmax(dict_['pred'])[:, 1].cpu().numpy()
+
+        # XXX fold_idx is just set to 0 for now
+        self.results.add_model(y_val, y_val.pred, 0, self.current_epoch)
+        self.results.calc_epoch_stats(self.current_epoch)
+        return dict()
+
     def configure_optimizers(self):
         sgd = torch.optim.SGD(self.parameters(), lr=self.hparams.learning_rate)
         scheduler = torch.optim.lr_scheduler.StepLR(sgd, 1, gamma=.2)
@@ -161,7 +174,8 @@ class System(pl.LightningModule):
                 all_sequences=[],
                 holdout_set_type='proto',
             )
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
+        self.train_loader = DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
+        return self.train_loader
 
     @pl.data_loader
     def val_dataloader(self):
@@ -178,7 +192,8 @@ class System(pl.LightningModule):
                 all_sequences=[],
                 holdout_set_type='proto',
             )
-        return DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
+        self.val_loader = DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
+        return self.val_loader
 
 
 def main():
@@ -191,8 +206,6 @@ def main():
     parser.add_argument('-c', '--cohort', default='/fastdata/ardsdetection_data_anon_non_consent_filtered/cohort-description.csv')
     parser.add_argument('--config-file', default='config.yml')
     parser.add_argument('--input-units', type=int, default=5096)
-    parser.add_argument('-ps', '--pattern-size', type=int, default=10)
-    parser.add_argument('-pf', '--pattern-freq', type=float, default=.5)
     parser.add_argument('-emin', '--min-epochs', type=int, default=5)
     parser.add_argument('-emax', '--max-epochs', type=int, default=20)
     parser.add_argument('-b', '--batch-size', type=int, default=128)
@@ -208,7 +221,7 @@ def main():
     model = System(args)
     trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, gpus=gpus)
     trainer.fit(model)
-    model.inference()
+    model.perform_inference()
 
 
 if __name__ == "__main__":

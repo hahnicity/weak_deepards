@@ -240,14 +240,14 @@ class ARDSRawDataset(Dataset):
         if self.kfold_num is not None:
             index = self.kfold_indexes[index]
         seq = self.all_sequences[index]
-        _, data, target = seq
+        pt, data, target = seq
         try:
             mu, std = self.scaling_factors[self.kfold_num]
         except AttributeError:
             raise AttributeError('Scaling factors not found for dataset. You must derive them using the `derive_scaling_factors` function.')
         data = (data - mu) / std
 
-        return index, data, target
+        return index, pt, data, target
 
     def __len__(self):
         if self.kfold_num is None:
