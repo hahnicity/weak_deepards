@@ -11,6 +11,7 @@ from scipy.signal import resample
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import Dataset, DataLoader
 from ventmap.raw_utils import extract_raw, read_processed_file
+from wfdb.io import rdann, rdsamp
 
 
 class ARDSRawDataset(Dataset):
@@ -288,3 +289,50 @@ class ARDSRawDataset(Dataset):
             return pt_id
         except:
             raise ValueError('could not find patient id in file: {}'.format(filename))
+
+
+class ApneaECGDataset(object):
+    def __init__(self, dataset_path, dataset_type, split_name):
+        """
+        :param dataset_path: directory path to the Apnea-ECG dataset
+        :param dataset_type: What set we are using (train/val/test)
+        :param split_name: What is the name of our split. Eg. foo_split
+        """
+        if dataset_type not in ['train', 'val', 'test']:
+            raise Exception('dataset_type must be either "train", "val", or "test"')
+
+        self.dataset_path = os.path.join(dataset_path, split_name+dataset_type)
+        self.record_set = [
+            os.path.splitext(os.path.basename(f))[0]
+            for f in glob(os.path.join(self.dataset_path, '*.dat'))
+        ]
+        self.all_sequences = []
+        self.process_dataset_v1()
+        self.dt = 0.01
+
+    def process_dataset_v1(self):
+        """
+        Process the dataset given the assumption that apnea is within the 1 minute interval.
+        For practical purposes, we will version this as v1. This is not the totally correct
+        interpretation of the Apnea-ECG dataset, but from what I've seen there seem to be
+        varying annotation patterns in the dataset and for now this template will serve
+        sufficiently for v1 purposes.
+        """
+        for record in self.record_set:
+            record_path = os.path.join(self.dataset_path, record)
+            data, metadata = rdsamp(record_path)
+            annos = rdann(record_path, 'apn')
+
+            for i, anno in enumerate(annos.symbol):
+                start_idx = i * 6000
+                end_idx = (i+1) * 6000
+
+                minute_data = data[start_idx:end_idx]
+                one_hot = {'A': [0, 1], 'N': [1, 0]}[anno]
+                self.all_sequences.append((record, i, minute_data, one_hot))
+
+    def __getitem__(self, idx):
+        return self.all_sequences[idx]
+
+    def __len__(self):
+        return len(self.all_sequences)
