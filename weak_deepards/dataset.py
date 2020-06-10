@@ -292,22 +292,30 @@ class ARDSRawDataset(Dataset):
 
 
 class ApneaECGDataset(object):
-    def __init__(self, dataset_path, dataset_type, split_name):
+    def __init__(self, dataset_path, dataset_type, split_name, scaling_type):
         """
         :param dataset_path: directory path to the Apnea-ECG dataset
         :param dataset_type: What set we are using (train/val/test)
         :param split_name: What is the name of our split. Eg. foo_split
+        :param scaling_type: "inter" for inter patient scaling or "intra" for intra-patient scaling
         """
         if dataset_type not in ['train', 'val', 'test']:
             raise Exception('dataset_type must be either "train", "val", or "test"')
+        if scaling_type not in ['inter', 'intra']:
+            raise Exception('scaling_type must be either "inter" or "intra"')
 
         self.dataset_path = os.path.join(dataset_path, split_name+dataset_type)
+        self.scaling_type = scaling_type
         self.record_set = [
             os.path.splitext(os.path.basename(f))[0]
             for f in glob(os.path.join(self.dataset_path, '*.dat'))
         ]
         self.all_sequences = []
         self.process_dataset_v1()
+        if self.scaling_type == 'intra':
+            self.obtain_intra_patient_scaling_coefs()
+        elif self.scaling_type == 'inter':
+            self.obtain_inter_patient_scaling_coefs()
         self.dt = 0.01
 
     def process_dataset_v1(self):
@@ -318,8 +326,8 @@ class ApneaECGDataset(object):
         varying annotation patterns in the dataset and for now this template will serve
         sufficiently for v1 purposes.
         """
-        for record in self.record_set:
-            record_path = os.path.join(self.dataset_path, record)
+        for record_name in self.record_set:
+            record_path = os.path.join(self.dataset_path, record_name)
             data, metadata = rdsamp(record_path)
             annos = rdann(record_path, 'apn')
 
@@ -327,12 +335,66 @@ class ApneaECGDataset(object):
                 start_idx = i * 6000
                 end_idx = (i+1) * 6000
 
-                minute_data = data[start_idx:end_idx]
+                # Ensure that we have uniform sized vectors
+                try:
+                    minute_data = data[start_idx:end_idx].reshape(1, 6000)
+                except:
+                    continue
+
                 one_hot = {'A': [0, 1], 'N': [1, 0]}[anno]
-                self.all_sequences.append((record, i, minute_data, one_hot))
+                self.all_sequences.append((i, record_name, minute_data, np.array(one_hot)))
+
+    def obtain_inter_patient_scaling_coefs(self):
+        self.coefs = {'sum': 0, 'len': 0, 'stdsum': 0}
+        for idx, record_name, data, one_hot in self.all_sequences:
+            self.coefs['sum'] += data[0].sum()
+            self.coefs['len'] += len(data[0])
+
+        self.coefs['mean'] = self.coefs['sum'] / self.coefs['len']
+        for idx, record_name, data, one_hot in self.all_sequences:
+            self.coefs['stdsum'] += ((data[0] - self.coefs['mean']) ** 2).sum()
+        self.coefs['std'] = np.sqrt(self.coefs['stdsum'] / self.coefs['len'])
+
+    def obtain_intra_patient_scaling_coefs(self):
+        """
+        Get scaling coefficients for each patient
+        """
+        last_record = self.all_sequences[0][1]
+        self.coefs = {last_record: {'sum': 0, 'len': 0, 'stdsum': 0}}
+
+        for idx, record_name, data, one_hot in self.all_sequences:
+            if record_name != last_record:
+                self.coefs[last_record]['mean'] = self.coefs[last_record]['sum'] / self.coefs[last_record]['len']
+                last_record = record_name
+                self.coefs[record_name] = {'sum': 0, 'len': 0, 'stdsum': 0}
+            self.coefs[record_name]['sum'] += data[0].sum()
+            self.coefs[record_name]['len'] += len(data[0])
+        else:
+            self.coefs[last_record]['mean'] = self.coefs[last_record]['sum'] / self.coefs[last_record]['len']
+
+
+        last_record = self.all_sequences[0][1]
+        for idx, record_name, data, one_hot in self.all_sequences:
+            if record_name != last_record:
+                self.coefs[last_record]['std'] = np.sqrt(self.coefs[last_record]['stdsum'] / self.coefs[last_record]['len'])
+                last_record = record_name
+            self.coefs[record_name]['stdsum'] += ((data[0] - self.coefs[record_name]['mean']) ** 2).sum()
+        else:
+            self.coefs[last_record]['std'] = np.sqrt(self.coefs[last_record]['stdsum'] / self.coefs[last_record]['len'])
 
     def __getitem__(self, idx):
-        return self.all_sequences[idx]
+        """
+        get next sequence
+        """
+        idxs, record, data, y = self.all_sequences[idx]
+
+        if self.scaling_type == 'intra':
+            mu, std = self.coefs[record]['mean'], self.coefs[record]['std']
+        elif self.scaling_type == 'inter':
+            mu, std = self.coefs['mean'], self.coefs['std']
+
+        data = (data - mu) / std
+        return (idxs, record, data, y)
 
     def __len__(self):
         return len(self.all_sequences)

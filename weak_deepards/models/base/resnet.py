@@ -84,20 +84,27 @@ class ResNet(nn.Module):
     of 2d, and make sure that code is appropriately modified on final layers.
     """
 
-    def __init__(self, block, layers, initial_planes=64):
+    def __init__(self, block, layers, initial_planes=64, initial_kernel_size=7, initial_stride=2):
         self.inplanes = initial_planes
         self.expansion = block.expansion
         super(ResNet, self).__init__()
-        # This divides the input by 2
-        self.conv1 = nn.Conv1d(1, self.inplanes, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.conv1_alt = nn.Conv1d(1, self.inplanes, kernel_size=3, stride=1, padding=1,
+
+        # XXX figure out padding later
+        # padding formula: (W-F+2P)/S + 1 is an integer
+        # W=input size
+        # F=filter size
+        # P=padding
+        # S=stride
+        #
+        # Conv output calc:
+        # O = (W-F+2P)/S +1
+        self.conv1 = nn.Conv1d(1,
+                               self.inplanes,
+                               kernel_size=initial_kernel_size,
+                               stride=initial_stride,
+                               padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm1d(self.inplanes)
-
-        self.conv2 = nn.Conv1d(self.inplanes, self.inplanes, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.bn2 = nn.BatchNorm1d(self.inplanes)
 
         self.relu = nn.ReLU(inplace=True)
         # This also divides the input by 2
@@ -130,6 +137,10 @@ class ResNet(nn.Module):
             self.layer4,
         )
         n_features = self.layer4[1].conv1.in_channels
+        # there is a classifier here because it basically works like grad cam does.
+        # it makes a classification on a specific downscaled location on the timeseries,
+        # and then that classification is fed back thru the PRM module to make an aggregate
+        # classification on the image/time series.
         self.classifier = nn.Conv1d(n_features, 2, kernel_size=1, bias=True)
 
     def _make_layer(self, block, planes, blocks, stride=1):

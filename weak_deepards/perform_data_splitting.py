@@ -250,9 +250,21 @@ def perform_random_apnea_ecg_split(dataset_path, split_ratio, validation_ratio, 
     splitter.create_apnea_ecg_split(test_records, dataset_name+'test')
 
 
+def perform_preset_apnea_ecg_split(dataset_path):
+    with open(os.path.join(dataset_path, 'RECORDS')) as f:
+        all_records = set([r.strip()[:3] for r in f.readlines()])
+    test_records = [r for r in all_records if r.startswith('x')]
+    train_records = all_records.difference(set(test_records))
+    splitter = Splitting(dataset_path)
+    splitter.create_apnea_ecg_split(list(train_records), 'maintrain')
+    splitter.create_apnea_ecg_split(list(test_records), 'maintest')
+
+
 def perform_apnea_ecg_split(args):
     if args.set_type == 'random':
         perform_random_apnea_ecg_split(args.dataset_path, args.split_ratio, args.validation_ratio, args.split_name)
+    elif args.set_type == 'preset_apnea':
+        perform_preset_apnea_ecg_split(args.dataset_path)
     else:
         raise Exception('Can currently only set to random set type when splitting with apnea ECG')
 
@@ -273,16 +285,17 @@ def perform_ards_split(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('dataset_path')
-    parser.add_argument('set_type', choices=['preset_proto', 'preset_aim1', 'random', 'preset_file'], help="""
+    parser.add_argument('set_type', choices=['preset_proto', 'preset_aim1', 'random', 'preset_file', 'preset_apnea'], help="""
         Split your data in a specific format:
 
         *preset_proto:* Utilize the proto train/test split. As it implies, used for prototyping purposes and shouldn't be used for result reporting
         *preset_aim1:* Use the preset holdout split we used for initial Aim 1 paper.
         *random:* Use a random split of the patients with a validation set.
+        *preset_apnea:* Use standard apnea ecg train/test split
     """)
     parser.add_argument('-sr', '--split-ratio', type=float, default=.4)
     parser.add_argument('-vr', '--validation-ratio', type=float, default=.375, help='Ratio of the testing set to split into the validation set. Only used for the random split type. If you dont want a validation set, set this argument to 0')
-    parser.add_argument('-n', '--split-name', help='New name train/test splits. Only used for random splits. If unset will just revert to default "random"')
+    parser.add_argument('-n', '--split-name', help='New name train/test splits. Only used for random splits. If unset will just revert to default "main"', default='main')
     parser.add_argument('-f', '--preset-file', help='Path to file where we set our train/test splits')
     subparsers = parser.add_subparsers(help='Specify which dataset you are going to use')
     ards = subparsers.add_parser('ards')
