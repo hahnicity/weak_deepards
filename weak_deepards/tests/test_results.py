@@ -89,7 +89,7 @@ def test_count_predictions():
     pred1 = pd.Series([0] * 50 + [1] * 60)
     model.set_results(y_test_fold1, pred1)
     res, cols = model.count_predictions()
-    assert res == [0, 1, 0, 0, 1, 0, 0, 0, 1]
+    assert res == [0, 1, 0, 0, 1, 0, 0, 0, 1, 0], res
 
 
 def test_auc_results():
