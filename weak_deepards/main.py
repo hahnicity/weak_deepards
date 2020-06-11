@@ -15,6 +15,7 @@ import yaml
 from weak_deepards.dataset import ApneaECGDataset, ARDSRawDataset
 from weak_deepards.models.base.resnet import resnet18, resnet34, resnet50
 from weak_deepards.models.base.dey import DeyNet
+from weak_deepards.models.base.urtnasan import UrtnasanNet
 from weak_deepards.models.prm import peak_response_mapping
 from weak_deepards.results import ModelCollection
 
@@ -218,7 +219,7 @@ class ApneaECG(pl.LightningModule):
         if self.hparams.train_from_pickle:
             pd.read_pickle(dataset, self.hparams.train_from_pickle)
         else:
-            dataset = ApneaECGDataset(self.hparams.dataset_path, 'train', self.hparams.split_name, self.hparams.scaling_type)
+            dataset = ApneaECGDataset(self.hparams.dataset_path, 'train', self.hparams.split_name, self.hparams.scaling_type, self.hparams.parsing_version)
 
         if self.hparams.train_to_pickle:
             pd.to_pickle(dataset, self.hparams.train_to_pickle)
@@ -229,7 +230,7 @@ class ApneaECG(pl.LightningModule):
         if self.hparams.test_from_pickle:
             pd.read_pickle(dataset, self.hparams.test_from_pickle)
         else:
-            dataset = ApneaECGDataset(self.hparams.dataset_path, 'test', self.hparams.split_name, self.hparams.scaling_type)
+            dataset = ApneaECGDataset(self.hparams.dataset_path, 'test', self.hparams.split_name, self.hparams.scaling_type, self.hparams.parsing_version)
         if self.hparams.train_to_pickle:
             pd.to_pickle(dataset, self.hparams.test_to_pickle)
         return DataLoader(dataset, batch_size=self.hparams.batch_size)
@@ -301,7 +302,20 @@ class ApneaECGDeyNet(ApneaECG):
         self.model = DeyNet()
 
 
-def main():
+class ApneaECGUrtNet(ApneaECG):
+    def __init__(self, hparams):
+        super(ApneaECGUrtNet, self).__init__(hparams)
+        self.model = UrtnasanNet()
+
+
+def apnea_parser_defaults(parser):
+    parser.add_argument('-dp', '--dataset-path', default='/fastdata/apnea-ecg/physionet.org/files/apnea-ecg/1.0.0/')
+    parser.add_argument('-n', '--split-name', default='main')
+    parser.add_argument('-st', '--scaling-type', choices=['intra', 'inter'], default='intra')
+    parser.add_argument('-pv', '--parsing-version', default='v2', choices=['v1', 'v2'])
+
+
+def build_parser():
     parser = ArgumentParser()
     parser.add_argument('--train-to-pickle', default='')
     parser.add_argument('--train-from-pickle', default='')
@@ -333,29 +347,31 @@ def main():
     ards_parser.add_argument('--pr-thresh', type=float, default=2.0, help='peak response threshold')
 
     apnea_prm_parser = subparsers.add_parser('apnea_ecg_prm')
-    apnea_prm_parser.add_argument('-dp', '--dataset-path', default='/fastdata/apnea-ecg/physionet.org/files/apnea-ecg/1.0.0/')
-    apnea_prm_parser.add_argument('-n', '--split-name', default='main')
-    apnea_prm_parser.add_argument('-st', '--scaling-type', choices=['intra', 'inter'], default='intra')
+    apnea_parser_defaults(apnea_prm_parser)
     apnea_prm_parser.add_argument('--base-net', choices=['resnet18', 'resnet34', 'resnet50'], default='resnet18')
     apnea_prm_parser.set_defaults(dataset='apnea_ecg', model='prm')
 
     apnea_resnet_parser = subparsers.add_parser('apnea_ecg_resnet')
-    apnea_resnet_parser.add_argument('-dp', '--dataset-path', default='/fastdata/apnea-ecg/physionet.org/files/apnea-ecg/1.0.0/')
-    apnea_resnet_parser.add_argument('-n', '--split-name', default='main')
-    apnea_resnet_parser.add_argument('-st', '--scaling-type', choices=['intra', 'inter'], default='intra')
+    apnea_parser_defaults(apnea_resnet_parser)
     apnea_resnet_parser.set_defaults(dataset='apnea_ecg', model='resnet')
 
     apnea_dey_parser = subparsers.add_parser('apnea_ecg_dey')
-    apnea_dey_parser.add_argument('-dp', '--dataset-path', default='/fastdata/apnea-ecg/physionet.org/files/apnea-ecg/1.0.0/')
-    apnea_dey_parser.add_argument('-n', '--split-name', default='main')
-    apnea_dey_parser.add_argument('-st', '--scaling-type', choices=['intra', 'inter'], default='intra')
+    apnea_parser_defaults(apnea_dey_parser)
     apnea_dey_parser.set_defaults(dataset='apnea_ecg', model='dey')
-    args = parser.parse_args()
+
+    apnea_urt_parser = subparsers.add_parser('apnea_ecg_urt')
+    apnea_parser_defaults(apnea_urt_parser)
+    apnea_urt_parser.set_defaults(dataset='apnea_ecg', model='urt')
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     gpus = {True: 1, False: None}[args.cuda]
     # XXX can add checkpoint callbacks if you want too. See the checkpoint
     # documentation if you want
-    stopping = EarlyStopping(min_delta=0.0, monitor='accuracy', patience=3, verbose=True, mode='max')
+    stopping = EarlyStopping(min_delta=0.0, monitor='accuracy', patience=5, verbose=True, mode='max')
     trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, gpus=gpus, early_stop_callback=stopping)
 
     if args.dataset == 'ards':
@@ -372,6 +388,9 @@ def main():
         trainer.fit(model)
     elif args.dataset == 'apnea_ecg' and args.model == 'dey':
         model = ApneaECGDeyNet(args)
+        trainer.fit(model)
+    elif args.dataset == 'apnea_ecg' and args.model == 'urt':
+        model = ApneaECGUrtNet(args)
         trainer.fit(model)
 
 
