@@ -292,17 +292,20 @@ class ARDSRawDataset(Dataset):
 
 
 class ApneaECGDataset(object):
-    def __init__(self, dataset_path, dataset_type, split_name, scaling_type):
+    def __init__(self, dataset_path, dataset_type, split_name, scaling_type, processing_version):
         """
         :param dataset_path: directory path to the Apnea-ECG dataset
         :param dataset_type: What set we are using (train/val/test)
         :param split_name: What is the name of our split. Eg. foo_split
         :param scaling_type: "inter" for inter patient scaling or "intra" for intra-patient scaling
+        :param processing_version: 'v1' if we want to process data only from beginning of each minute. v2 if we want to start at the middle of each minute
         """
         if dataset_type not in ['train', 'val', 'test']:
             raise Exception('dataset_type must be either "train", "val", or "test"')
         if scaling_type not in ['inter', 'intra']:
             raise Exception('scaling_type must be either "inter" or "intra"')
+        if processing_version not in ['v1', 'v2']:
+            raise Exception('processing version must be either v1 or v2')
 
         self.dataset_path = os.path.join(dataset_path, split_name+dataset_type)
         self.scaling_type = scaling_type
@@ -311,7 +314,11 @@ class ApneaECGDataset(object):
             for f in glob(os.path.join(self.dataset_path, '*.dat'))
         ]
         self.all_sequences = []
-        self.process_dataset_v1()
+        if processing_version == 'v1':
+            self.process_dataset_v1()
+        elif processing_version == 'v2':
+            self.process_dataset_v2()
+
         if self.scaling_type == 'intra':
             self.obtain_intra_patient_scaling_coefs()
         elif self.scaling_type == 'inter':
@@ -334,6 +341,30 @@ class ApneaECGDataset(object):
             for i, anno in enumerate(annos.symbol):
                 start_idx = i * 6000
                 end_idx = (i+1) * 6000
+
+                # Ensure that we have uniform sized vectors
+                try:
+                    minute_data = data[start_idx:end_idx].reshape(1, 6000)
+                except:
+                    continue
+
+                one_hot = {'A': [0, 1], 'N': [1, 0]}[anno]
+                self.all_sequences.append((i, record_name, minute_data, np.array(one_hot)))
+
+    def process_dataset_v2(self):
+        """
+        Second variant of dataset processing. I don't know if the v2 means its significantly
+        better or not, but we do try to shift the data frame so that it takes the input more
+        into account.
+        """
+        for record_name in self.record_set:
+            record_path = os.path.join(self.dataset_path, record_name)
+            data, metadata = rdsamp(record_path)
+            annos = rdann(record_path, 'apn')
+            # first annotation is skipped
+            for i, anno in enumerate(annos.symbol[1:]):
+                start_idx = i * 6000 + 3000
+                end_idx = (i+1) * 6000 + 3000
 
                 # Ensure that we have uniform sized vectors
                 try:
