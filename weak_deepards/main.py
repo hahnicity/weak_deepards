@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 import yaml
 
 from weak_deepards.dataset import ApneaECGDataset, ARDSRawDataset
-from weak_deepards.models.base.resnet import resnet18
+from weak_deepards.models.base.resnet import resnet18, resnet34, resnet50
 from weak_deepards.models.base.dey import DeyNet
 from weak_deepards.models.prm import peak_response_mapping
 from weak_deepards.results import ModelCollection
@@ -239,22 +239,20 @@ class ApneaECG(pl.LightningModule):
 
     def configure_optimizers(self):
         if self.hparams.optimizer == 'adam':
-            optim = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+            optim = torch.optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
         elif self.hparams.optimizer == 'sgd':
-            optim = torch.optim.SGD(self.parameters(), lr=self.hparams.learning_rate)
+            optim = torch.optim.SGD(self.model.parameters(), lr=self.hparams.learning_rate, momentum=self.hparams.momentum, weight_decay=self.hparams.weight_decay)
         elif self.hparams.optimizer == 'adamw':
-            optim = torch.optim.AdamW(self.parameters(), lr=self.hparams.learning_rate)
+            optim = torch.optim.AdamW(self.model.parameters(), lr=self.hparams.learning_rate)
         elif self.hparams.optimizer == 'rmsprop':
-            optim = torch.optim.RMSprop(self.parameters(), lr=self.hparams.learning_rate)
+            optim = torch.optim.RMSprop(self.model.parameters(), lr=self.hparams.learning_rate)
 
         scheduler = torch.optim.lr_scheduler.StepLR(optim, self.hparams.lr_decay_epochs, gamma=.1)
         return [optim], [scheduler]
 
     def training_step(self, batch, batch_idx):
         idxs, record, x, y = batch
-        x = Variable(x)
-        y = Variable(y)
-        y_hat = self.forward(x.float())
+        y_hat = self(x.float())
 
         loss = self.loss_func(y_hat, y.float())
         board_logs = {'train_loss': loss}
@@ -293,7 +291,8 @@ class ApneaECGPRM(ApneaECG, PeakResponseSystem):
 class ApneaECGResNet(ApneaECG):
     def __init__(self, hparams):
         super(ApneaECGResNet, self).__init__(hparams)
-        self.model = resnet18(initial_kernel_size=hparams.kernel_size, initial_stride=hparams.stride)
+        net = {'resnet18': resnet18, 'resnet34': resnet34, 'resnet50':resnet50}[hparams.base_net]
+        self.model = net(initial_kernel_size=hparams.kernel_size, initial_stride=hparams.stride)
 
 
 class ApneaECGDeyNet(ApneaECG):
@@ -317,8 +316,10 @@ def main():
     parser.add_argument('-lr', '--learning-rate', type=float, default=0.01)
     parser.add_argument('-emin', '--min-epochs', type=int, default=5)
     parser.add_argument('-emax', '--max-epochs', type=int, default=20)
+    parser.add_argument('--momentum', type=float, default=.9)
+    parser.add_argument('-wd', '--weight-decay', type=float, default=.00001)
     parser.add_argument('--config-file', default='config.yml')
-    parser.add_argument('-ks', '--kernel-size', type=int, default=3, help="Size of the initial CNN filters. It is 7 on resnet.")
+    parser.add_argument('-ks', '--kernel-size', type=int, default=7, help="Size of the initial CNN filters. It is 7 on resnet.")
     parser.add_argument('-st', '--stride', type=int, default=2, help='Stride of the initial CNN filters. Normally in ResNet it is 2')
     parser.add_argument('--lr-decay-epochs', type=int, default=2)
     parser.add_argument('--loss-func', choices=['ce', 'bce'], default='bce')
@@ -335,6 +336,7 @@ def main():
     apnea_prm_parser.add_argument('-dp', '--dataset-path', default='/fastdata/apnea-ecg/physionet.org/files/apnea-ecg/1.0.0/')
     apnea_prm_parser.add_argument('-n', '--split-name', default='main')
     apnea_prm_parser.add_argument('-st', '--scaling-type', choices=['intra', 'inter'], default='intra')
+    apnea_prm_parser.add_argument('--base-net', choices=['resnet18', 'resnet34', 'resnet50'], default='resnet18')
     apnea_prm_parser.set_defaults(dataset='apnea_ecg', model='prm')
 
     apnea_resnet_parser = subparsers.add_parser('apnea_ecg_resnet')
