@@ -14,3 +14,12 @@ dependencies:
   - opencv
   - tensorboardx
   - ipython
+  - pip
+  - pip:
+    - pandas
+    - prettytable
+    - pytorch-lightning
+    - scikit-learn
+    - imbalanced-learn
+    - ventmap
+    - wfdb

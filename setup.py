@@ -7,16 +7,5 @@ setup(name='weak deepards',
       version="1.0",
       description='Weakly Supervised Deep Learning For ARDS detection with Ventilator Waveform Data',
       packages=find_packages(),
-      install_requires=[
-          'numpy',
-          'pandas',
-          'prettytable',
-          'pytorch-lightning',
-          'scipy',
-          'scikit-learn<0.21.0',
-          'ventmap',
-          'imbalanced-learn==0.4.3',
-      ],
-      entry_points={
-      },
+      install_requires=[],
       )
