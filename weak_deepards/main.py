@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping
 from sklearn.metrics import accuracy_score
@@ -13,6 +14,7 @@ from torch.utils.data import DataLoader
 import yaml
 
 from weak_deepards.dataset import ApneaECGDataset, ARDSRawDataset
+from weak_deepards.models.base.densenet import densenet18
 from weak_deepards.models.base.resnet import resnet18, resnet34, resnet50
 from weak_deepards.models.base.dey import DeyNet
 from weak_deepards.models.base.urtnasan import UrtnasanNet
@@ -20,21 +22,37 @@ from weak_deepards.models.prm import peak_response_mapping
 from weak_deepards.results import ModelCollection
 
 
-class PeakResponseSystem(object):
-    # XXX ensure this can work both with ARDS and apnea ECG data
+class ARDSSystem(pl.LightningModule):
+    def __init__(self, hparams):
+        super(ARDSSystem, self).__init__()
+        with open(hparams.config_file) as conf:
+            config = yaml.safe_load(conf)
+        self.input_units = hparams.input_units
+        if hparams.base_net == 'resnet18':
+            base = resnet18(initial_kernel_size=hparams.kernel_size, initial_stride=hparams.stride)
+        elif hparams.base_net == 'densenet18':
+            base = densenet18()
+        self.model = peak_response_mapping(base, **config['model'])
+        self.hparams = hparams
+        self.results = ModelCollection()
+        if self.hparams.loss_func == 'ce':
+            self.loss_func = F.cross_entropy
+        elif self.hparams.loss_func == 'bce':
+            self.loss_func = F.binary_cross_entropy_with_logits
+
     def perform_inference(self):
+        val_loader = self.val_dataloader()
         # need to enable grad because pytorch lightning disables in validation step
         # It doesn't matter how much we try to explicitly enable grad, if we are under
         # a with.no_grad header no grads will ever be calculated
         with torch.enable_grad():
             # Get batch from loader
-            # XXX this line doesn't work with the apnea ECG
             for rand_batch in self.val_loader:
                 break
             batch_data = rand_batch[2]
             rand_idx = np.random.randint(batch_data.shape[0])
             rand_seq = batch_data[rand_idx].float().reshape(
-                (1, 1, self.hparams.input_units)).cuda().requires_grad_()
+                (1, 1, self.hparams.input_units)).requires_grad_()
             # run an inference to get an intuition for the model
             self.model.eval()
             self.model.inference()
@@ -92,22 +110,6 @@ class PeakResponseSystem(object):
             # reset back to training state
             self.model.train()
 
-
-class ARDSSystem(PeakResponseSystem, pl.LightningModule):
-    def __init__(self, hparams):
-        super(ARDSSystem, self).__init__()
-        with open(hparams.config_file) as conf:
-            config = yaml.safe_load(conf)
-        self.input_units = hparams.input_units
-        base = resnet18(initial_kernel_size=hparams.kernel_size, initial_stride=hparams.stride)
-        self.model = peak_response_mapping(base, **config['model'])
-        self.hparams = hparams
-        self.results = ModelCollection()
-        if self.hparams.loss_func == 'ce':
-            self.loss_func = F.cross_entropy
-        elif self.hparams.loss_func == 'bce':
-            self.loss_func = F.binary_cross_entropy_with_logits
-
     def forward(self, x):
         return self.model(x)
 
@@ -117,14 +119,8 @@ class ARDSSystem(PeakResponseSystem, pl.LightningModule):
         x = Variable(x)
         y = Variable(y)
         y_hat = self.forward(x.float())
-        # Can probably just use BCE on this one because we're only supposed to have one class
-        # in each snippet of data. However I wonder what would happen if we stretched the window
-        # wide enough and we started saying that there were both norm and ARDS pattern in it.
-        # Could be a interesting experiment even if its a total failure
-        #
-        # XXX I dunno if using CE is right or if argmax is correct, but I'd like to see how
-        # it pans out
-        loss = self.loss_func(y_hat, y.long().argmax(dim=1))
+        # XXX make sure this is cross functional with bce and ce
+        loss = self.loss_func(y_hat, y)
         board_logs = {'train_loss': loss}
         return {'loss': loss, 'log': board_logs}
 
@@ -132,7 +128,9 @@ class ARDSSystem(PeakResponseSystem, pl.LightningModule):
         idxs, pt, x, y = batch
         x = x.unsqueeze(1)
         y_hat = self.forward(x.float())
-        loss = self.loss_func(y_hat, y.long().argmax(dim=1))
+        # XXX make sure this is cross functional with bce and ce
+        loss = self.loss_func(y_hat, y)
+        # XXX should add accuracy here so we could add it to the early stopping step
         return {'val_loss': loss, 'pt': pt, 'y': y, 'pred': y_hat, 'idxs': idxs}
 
     def validation_end(self, outputs):
@@ -185,6 +183,9 @@ class ARDSSystem(PeakResponseSystem, pl.LightningModule):
                 all_sequences=[],
                 holdout_set_type='proto',
             )
+        if self.hparams.train_to_pickle:
+            pd.to_pickle(dataset, self.hparams.train_to_pickle)
+
         self.train_loader = DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
         return self.train_loader
 
@@ -202,6 +203,9 @@ class ARDSSystem(PeakResponseSystem, pl.LightningModule):
                 all_sequences=[],
                 holdout_set_type='proto',
             )
+        if self.hparams.test_to_pickle:
+            pd.to_pickle(dataset, self.hparams.test_to_pickle)
+
         self.val_loader = DataLoader(dataset, batch_size=self.hparams.batch_size)
         return self.val_loader
 
@@ -280,7 +284,7 @@ class ApneaECG(pl.LightningModule):
         return {'accuracy': acc, 'log': board_logs, 'val_loss': val_loss}
 
 
-class ApneaECGPRM(ApneaECG, PeakResponseSystem):
+class ApneaECGPRM(ApneaECG):
     def __init__(self, hparams):
         super(ApneaECGPRM, self).__init__(hparams)
         base = resnet18(initial_kernel_size=hparams.kernel_size, initial_stride=hparams.stride)
@@ -324,6 +328,7 @@ def build_parser():
     parser.add_argument('--test-to-pickle', default='')
     parser.add_argument('--test-from-pickle', default='')
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--n-gpus', default=2, type=int)
     parser.add_argument('-nn', choices=['cnn'], default='cnn')
     parser.add_argument('-o', '--optimizer', choices=['adam', 'sgd', 'adamw', 'rmsprop'], default='sgd')
     parser.add_argument('-b', '--batch-size', type=int, default=128)
@@ -337,12 +342,13 @@ def build_parser():
     parser.add_argument('-st', '--stride', type=int, default=2, help='Stride of the initial CNN filters. Normally in ResNet it is 2')
     parser.add_argument('--lr-decay-epochs', type=int, default=2)
     parser.add_argument('--loss-func', choices=['ce', 'bce'], default='bce')
+    parser.add_argument('--base-net', choices=['resnet18', 'densenet18'], default='densenet18')
 
     subparsers = parser.add_subparsers(help='Choose whether to train for Apnea-ECG or ARDS')
     ards_parser = subparsers.add_parser('ards')
     ards_parser.set_defaults(dataset='ards', model='prm')
-    ards_parser.add_argument('-dp', '--dataset-path', default='/fastdata/ardsdetection_data_anon_non_consent_filtered')
-    ards_parser.add_argument('-c', '--cohort', default='/fastdata/ardsdetection_data_anon_non_consent_filtered/cohort-description.csv')
+    ards_parser.add_argument('-dp', '--dataset-path', default='/fastdata/ardsdetection')
+    ards_parser.add_argument('-c', '--cohort', default='/fastdata/ardsdetection/cohort-description.csv')
     ards_parser.add_argument('--input-units', type=int, default=5096, help='size of input sequence')
     ards_parser.add_argument('--pr-thresh', type=float, default=2.0, help='peak response threshold')
 
@@ -368,21 +374,23 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
 
-    gpus = {True: 1, False: None}[args.cuda]
+    gpus = {True: args.n_gpus, False: None}[args.cuda]
     # XXX can add checkpoint callbacks if you want too. See the checkpoint
     # documentation if you want
-    stopping = EarlyStopping(min_delta=0.0, monitor='accuracy', patience=5, verbose=True, mode='max')
-    trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, gpus=gpus, early_stop_callback=stopping)
+    #
+    # XXX need to add a custom accuracy monitor. however for now we can
+    # just use val_loss
+    stopping = EarlyStopping(min_delta=0.0, monitor='val_loss', patience=5, verbose=True, mode='min')
+    trainer = pl.Trainer(max_epochs=args.max_epochs, min_epochs=args.min_epochs, gpus=gpus, callbacks=[stopping])
 
     if args.dataset == 'ards':
         model = ARDSSystem(args)
         trainer.fit(model)
         model.perform_inference()
     elif args.dataset == 'apnea_ecg' and args.model == 'prm':
+        # not going to invest anymore into the apnea models
         model = ApneaECGPRM(args)
         trainer.fit(model)
-        # XXX need to get this working
-        #model.perform_inference()
     elif args.dataset == 'apnea_ecg' and args.model == 'resnet':
         model = ApneaECGResNet(args)
         trainer.fit(model)

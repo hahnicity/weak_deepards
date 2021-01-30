@@ -89,7 +89,6 @@ class ResNet(nn.Module):
         self.expansion = block.expansion
         super(ResNet, self).__init__()
 
-        # XXX figure out padding later
         # padding formula: (W-F+2P)/S + 1 is an integer
         # W=input size
         # F=filter size
@@ -161,6 +160,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        import IPython; IPython.embed()
         x = self.features(x)
         x = self.classifier(x)
         return x
