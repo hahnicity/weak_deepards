@@ -20,7 +20,6 @@ class ARDSRawDataset(Dataset):
                  experiment_num,
                  cohort_file,
                  seq_len,
-                 to_pickle=None,
                  all_sequences=[],
                  train=True,
                  kfold_num=None,
@@ -50,7 +49,7 @@ class ARDSRawDataset(Dataset):
             data_subdir = 'all_data'
 
         if self.all_sequences != []:
-            self.finalize_dataset_create(to_pickle, kfold_num)
+            self.finalize_dataset_create(kfold_num)
             return
 
         raw_dir = os.path.join(data_path, 'experiment{}'.format(experiment_num), data_subdir, 'raw')
@@ -61,13 +60,10 @@ class ARDSRawDataset(Dataset):
         self.processed_files = sorted(glob(os.path.join(raw_dir, '*/*.processed.npy')))
         self.meta_files = sorted(glob(os.path.join(self.meta_dir, '*/*.csv')))
         self.get_dataset()
-        self.finalize_dataset_create(to_pickle, kfold_num)
+        self.finalize_dataset_create(kfold_num)
 
-    def finalize_dataset_create(self, to_pickle, kfold_num):
+    def finalize_dataset_create(self, kfold_num):
         self.derive_scaling_factors()
-        if to_pickle:
-            pd.to_pickle(self, to_pickle)
-
         if kfold_num is not None:
             self.set_kfold_indexes_for_fold(kfold_num)
 
@@ -115,16 +111,12 @@ class ARDSRawDataset(Dataset):
         return test_dataset
 
     @classmethod
-    def from_pickle(self, data_path, oversample_minority=False):
+    def from_pickle(self, data_path, oversample_minority=True):
         dataset = pd.read_pickle(data_path)
         if not isinstance(dataset, ARDSRawDataset):
             raise ValueError('The pickle file you have specified is out-of-date. Please re-process your dataset and save the new pickled dataset.')
         self.oversample = oversample_minority
-        # paranoia
-        try:
-            dataset.scaling_factors
-        except AttributeError:
-            dataset.derive_scaling_factors()
+        self.train = True
         return dataset
 
     def set_kfold_indexes_for_fold(self, kfold_num):
